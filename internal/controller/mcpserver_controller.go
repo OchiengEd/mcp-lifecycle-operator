@@ -162,7 +162,16 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Set phase and conditions based on Deployment status
-	if deploymentAvailable && existingDeployment.Status.ReadyReplicas > 0 {
+if len(existingDeployment.Status.Conditions) == 0 && existingDeployment.Status.ReadyReplicas == 0 {
+    mcpServer.Status.Phase = "Pending"
+    meta.SetStatusCondition(&mcpServer.Status.Conditions, metav1.Condition{
+        Type:    "Ready",
+        Status:  metav1.ConditionFalse,
+        Reason:  "DeploymentPending",
+        Message: "Waiting for Deployment to report status",
+        ObservedGeneration: mcpServer.Generation,
+    })
+} else if deploymentAvailable && existingDeployment.Status.ReadyReplicas > 0 {
 		mcpServer.Status.Phase = "Running"
 		meta.SetStatusCondition(&mcpServer.Status.Conditions, metav1.Condition{
 			Type:               "Ready",
