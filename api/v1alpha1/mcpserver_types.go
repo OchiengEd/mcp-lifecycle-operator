@@ -116,7 +116,7 @@ type MCPServerSpec struct {
 	SecretRef *corev1.LocalObjectReference `json:"secretRef,omitempty"`
 
 	// SecretMountPath specifies the path where the Secret should be mounted.
-	// Only used when SecretRef is set
+	// Only used when SecretRef is set. Defaults to /etc/mcp-secrets if not specified.
 	// +optional
 	SecretMountPath string `json:"secretMountPath,omitempty"`
 
