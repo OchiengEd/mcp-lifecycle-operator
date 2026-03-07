@@ -302,3 +302,11 @@ var _ = Describe("MCPServer Controller", func() {
 		})
 	})
 })
+
+var _ = Describe("Phase Constants", func() {
+	It("should define expected phase values", func() {
+		Expect(PhasePending).To(Equal("Pending"))
+		Expect(PhaseRunning).To(Equal("Running"))
+		Expect(PhaseFailed).To(Equal("Failed"))
+	})
+})

@@ -38,6 +38,13 @@ import (
 	mcpv1alpha1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1alpha1"
 )
 
+// Phase constants for MCPServer status.
+const (
+	PhasePending = "Pending"
+	PhaseRunning = "Running"
+	PhaseFailed  = "Failed"
+)
+
 // MCPServerReconciler reconciles a MCPServer object
 type MCPServerReconciler struct {
 	client.Client
@@ -73,7 +80,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Set initial phase
 	if mcpServer.Status.Phase == "" {
-		mcpServer.Status.Phase = "Pending"
+		mcpServer.Status.Phase = PhasePending
 		if err := r.Status().Update(ctx, mcpServer); err != nil {
 			logger.Error(err, "Failed to update MCPServer status")
 			return ctrl.Result{}, err
@@ -178,7 +185,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Set phase and conditions based on Deployment status
 	if len(existingDeployment.Status.Conditions) == 0 && existingDeployment.Status.ReadyReplicas == 0 {
-		mcpServer.Status.Phase = "Pending"
+		mcpServer.Status.Phase = PhasePending
 		meta.SetStatusCondition(&mcpServer.Status.Conditions, metav1.Condition{
 			Type:               "Ready",
 			Status:             metav1.ConditionFalse,
@@ -187,7 +194,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			ObservedGeneration: mcpServer.Generation,
 		})
 	} else if deploymentAvailable && existingDeployment.Status.ReadyReplicas > 0 {
-		mcpServer.Status.Phase = "Running"
+		mcpServer.Status.Phase = PhaseRunning
 		meta.SetStatusCondition(&mcpServer.Status.Conditions, metav1.Condition{
 			Type:               "Ready",
 			Status:             metav1.ConditionTrue,
@@ -196,7 +203,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			ObservedGeneration: mcpServer.Generation,
 		})
 	} else if deploymentReplicaFailure || (!deploymentProgressing && !deploymentAvailable) {
-		mcpServer.Status.Phase = "Failed"
+		mcpServer.Status.Phase = PhaseFailed
 		message := "Deployment failed"
 		if deploymentMessage != "" {
 			message = deploymentMessage
@@ -210,7 +217,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		})
 	} else {
 		// Deployment is progressing but not yet available
-		mcpServer.Status.Phase = "Pending"
+		mcpServer.Status.Phase = PhasePending
 		meta.SetStatusCondition(&mcpServer.Status.Conditions, metav1.Condition{
 			Type:               "Ready",
 			Status:             metav1.ConditionFalse,
@@ -355,7 +362,7 @@ func (r *MCPServerReconciler) createService(mcpServer *mcpv1alpha1.MCPServer) *c
 
 // updateStatusFailed updates the MCPServer status to Failed
 func (r *MCPServerReconciler) updateStatusFailed(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer, message string) {
-	mcpServer.Status.Phase = "Failed"
+	mcpServer.Status.Phase = PhaseFailed
 	meta.SetStatusCondition(&mcpServer.Status.Conditions, metav1.Condition{
 		Type:               "Ready",
 		Status:             metav1.ConditionFalse,
