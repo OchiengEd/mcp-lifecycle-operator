@@ -60,8 +60,12 @@ metadata:
   name: test-server
   namespace: default
 spec:
-  image: aliok/mcp-server-streamable-http:latest
-  port: 8081
+  source:
+    type: ContainerImage
+    containerImage:
+      ref: aliok/mcp-server-streamable-http:latest
+  config:
+    port: 8081
 EOF
 ```
 
@@ -150,8 +154,12 @@ metadata:
   name: streamable-http-server
   namespace: default
 spec:
-  image: aliok/mcp-server-streamable-http:latest
-  port: 8081
+  source:
+    type: ContainerImage
+    containerImage:
+      ref: aliok/mcp-server-streamable-http:latest
+  config:
+    port: 8081
 ```
 
 ### Custom MCP Server
@@ -163,8 +171,12 @@ metadata:
   name: custom-server
   namespace: default
 spec:
-  image: my-registry.io/custom-mcp-server:1.0.0
-  port: 8000
+  source:
+    type: ContainerImage
+    containerImage:
+      ref: my-registry.io/custom-mcp-server:1.0.0
+  config:
+    port: 8000
 ```
 
 ## Development

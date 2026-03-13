@@ -20,12 +20,17 @@ metadata:
   name: kubernetes-mcp-server
   namespace: default
 spec:
-  image: quay.io/containers/kubernetes_mcp_server:latest
-  port: 8080
-  configMapRef:
-    name: kubernetes-mcp-server-config
-  configMapMountPath: /etc/mcp-config      # Optional: defaults to /etc/mcp-config
-  configMapVolumeName: mcp-config          # Optional: defaults to mcp-config
-  args:
-    - --config
-    - /etc/mcp-config/config.toml
+  source:
+    type: ContainerImage
+    containerImage:
+      ref: quay.io/containers/kubernetes_mcp_server:latest
+  config:
+    port: 8080
+    arguments:
+      - --config
+      - /etc/mcp-config/config.toml
+    storage:
+      - path: /etc/mcp-config
+        type: ConfigMap
+        configMap:
+          name: kubernetes-mcp-server-config

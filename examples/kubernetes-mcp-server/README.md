@@ -36,12 +36,11 @@ kubectl apply -f mcpserver-with-config.yaml
 
 This example shows how to:
 1. Create a ConfigMap with `config.toml`
-2. Reference the ConfigMap in the MCPServer spec
-3. Optionally specify a custom mount path via `configMapMountPath` (defaults to `/etc/mcp-config`)
-4. Optionally specify a custom volume name via `configMapVolumeName` (defaults to `mcp-config`)
-5. Pass the config path via args
+2. Mount the ConfigMap via `spec.config.storage` array
+3. Specify the mount path and ConfigMap details
+4. Pass the config path via `spec.config.arguments`
 
-The ConfigMap is mounted as a read-only volume at the specified path.
+The ConfigMap is mounted as a read-only volume (readOnly defaults to true).
 
 ## Deployment with RBAC (Recommended)
 
@@ -102,7 +101,9 @@ Then create a ClusterRoleBinding and update the MCPServer to use your ServiceAcc
 
 ```yaml
 spec:
-  serviceAccountName: my-custom-sa
+  runtime:
+    security:
+      serviceAccountName: my-custom-sa
 ```
 
 ## Testing

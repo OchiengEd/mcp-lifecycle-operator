@@ -4,5 +4,9 @@ metadata:
   name: kubernetes-mcp-server
   namespace: default
 spec:
-  image: quay.io/containers/kubernetes_mcp_server:latest
-  port: 8080
+  source:
+    type: ContainerImage
+    containerImage:
+      ref: quay.io/containers/kubernetes_mcp_server:latest
+  config:
+    port: 8080
