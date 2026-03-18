@@ -20,6 +20,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -1302,6 +1303,203 @@ var _ = Describe("MCPServer Validation", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(apierrors.IsInvalid(err)).To(BeTrue())
 			Expect(err.Error()).To(ContainSubstring("serviceAccountName"))
+		})
+	})
+
+	Context("MCPServerSpec.Path validation", func() {
+		It("should accept valid HTTP path", func() {
+			mcpServer := &MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "valid-path",
+					Namespace: namespace.Name,
+				},
+				Spec: MCPServerSpec{
+					Source: Source{
+						Type: SourceTypeContainerImage,
+						ContainerImage: &ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: ServerConfig{
+						Port: 8080,
+					},
+					Path: "/api/v1/mcp",
+				},
+			}
+			Expect(k8sClient.Create(ctx, mcpServer)).To(Succeed())
+		})
+
+		It("should accept path with hyphens and underscores", func() {
+			mcpServer := &MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "valid-path-chars",
+					Namespace: namespace.Name,
+				},
+				Spec: MCPServerSpec{
+					Source: Source{
+						Type: SourceTypeContainerImage,
+						ContainerImage: &ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: ServerConfig{
+						Port: 8080,
+					},
+					Path: "/mcp-server_v1",
+				},
+			}
+			Expect(k8sClient.Create(ctx, mcpServer)).To(Succeed())
+		})
+
+		It("should use default path /mcp when not specified", func() {
+			mcpServer := &MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "default-path",
+					Namespace: namespace.Name,
+				},
+				Spec: MCPServerSpec{
+					Source: Source{
+						Type: SourceTypeContainerImage,
+						ContainerImage: &ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: ServerConfig{
+						Port: 8080,
+					},
+					// Path not specified - should default to /mcp
+				},
+			}
+			Expect(k8sClient.Create(ctx, mcpServer)).To(Succeed())
+		})
+
+		It("should reject path not starting with /", func() {
+			mcpServer := &MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "invalid-path-no-slash",
+					Namespace: namespace.Name,
+				},
+				Spec: MCPServerSpec{
+					Source: Source{
+						Type: SourceTypeContainerImage,
+						ContainerImage: &ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: ServerConfig{
+						Port: 8080,
+					},
+					Path: "relative/path",
+				},
+			}
+			err := k8sClient.Create(ctx, mcpServer)
+			Expect(err).To(HaveOccurred())
+			Expect(apierrors.IsInvalid(err)).To(BeTrue())
+			Expect(err.Error()).To(ContainSubstring("must start with '/'"))
+		})
+
+		It("should reject path containing spaces", func() {
+			mcpServer := &MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "invalid-path-space",
+					Namespace: namespace.Name,
+				},
+				Spec: MCPServerSpec{
+					Source: Source{
+						Type: SourceTypeContainerImage,
+						ContainerImage: &ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: ServerConfig{
+						Port: 8080,
+					},
+					Path: "/mcp server/path",
+				},
+			}
+			err := k8sClient.Create(ctx, mcpServer)
+			Expect(err).To(HaveOccurred())
+			Expect(apierrors.IsInvalid(err)).To(BeTrue())
+			Expect(err.Error()).To(ContainSubstring("must not contain spaces"))
+		})
+
+		It("should reject path containing query string separator", func() {
+			mcpServer := &MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "invalid-path-query",
+					Namespace: namespace.Name,
+				},
+				Spec: MCPServerSpec{
+					Source: Source{
+						Type: SourceTypeContainerImage,
+						ContainerImage: &ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: ServerConfig{
+						Port: 8080,
+					},
+					Path: "/mcp?query=param",
+				},
+			}
+			err := k8sClient.Create(ctx, mcpServer)
+			Expect(err).To(HaveOccurred())
+			Expect(apierrors.IsInvalid(err)).To(BeTrue())
+			Expect(err.Error()).To(ContainSubstring("must not contain query string separator"))
+		})
+
+		It("should reject path containing fragment separator", func() {
+			mcpServer := &MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "invalid-path-fragment",
+					Namespace: namespace.Name,
+				},
+				Spec: MCPServerSpec{
+					Source: Source{
+						Type: SourceTypeContainerImage,
+						ContainerImage: &ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: ServerConfig{
+						Port: 8080,
+					},
+					Path: "/mcp#fragment",
+				},
+			}
+			err := k8sClient.Create(ctx, mcpServer)
+			Expect(err).To(HaveOccurred())
+			Expect(apierrors.IsInvalid(err)).To(BeTrue())
+			Expect(err.Error()).To(ContainSubstring("must not contain fragment separator"))
+		})
+
+		It("should reject path that is too long", func() {
+			longPath := "/" + strings.Repeat("a", 253) // 254 chars total
+			mcpServer := &MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "invalid-path-toolong",
+					Namespace: namespace.Name,
+				},
+				Spec: MCPServerSpec{
+					Source: Source{
+						Type: SourceTypeContainerImage,
+						ContainerImage: &ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: ServerConfig{
+						Port: 8080,
+					},
+					Path: longPath,
+				},
+			}
+			err := k8sClient.Create(ctx, mcpServer)
+			Expect(err).To(HaveOccurred())
+			Expect(apierrors.IsInvalid(err)).To(BeTrue())
+			Expect(err.Error()).To(Or(
+				ContainSubstring("Too long"),
+				ContainSubstring("max length"),
+			))
 		})
 	})
 })
