@@ -27,72 +27,155 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
-// MCPServerSpec defines the desired state of MCPServer
-type MCPServerSpec struct {
-	// Image is the container image containing the MCP server implementation.
+// SourceType defines the type of source for the MCP server.
+// +kubebuilder:validation:Enum=ContainerImage
+type SourceType string
+
+const (
+	// SourceTypeContainerImage indicates the source is a container image.
+	SourceTypeContainerImage SourceType = "ContainerImage"
+)
+
+// ContainerImageSource defines a container image source.
+type ContainerImageSource struct {
+	// Ref is the container image containing the MCP server implementation.
+	// Must be a valid OCI image reference.
 	// Examples:
 	//   - ghcr.io/modelcontextprotocol/servers/filesystem:latest
 	//   - ghcr.io/modelcontextprotocol/servers/github:v1.0.0
 	//   - custom-registry.io/my-mcp-server:1.2.3
-	// +required
+	//   - custom-registry.io/my-mcp-server@sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength:=1
+	// +kubebuilder:validation:MaxLength:=1000
+	// +kubebuilder:validation:XValidation:rule="self.matches('^([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9])((\\\\.([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]))+)?(:[0-9]+)?\\\\b')",message="must start with a valid domain. valid domains must be alphanumeric characters (lowercase and uppercase) separated by the \".\" character."
+	// +kubebuilder:validation:XValidation:rule="self.find('(\\\\/[a-z0-9]+((([._]|__|[-]*)[a-z0-9]+)+)?((\\\\/[a-z0-9]+((([._]|__|[-]*)[a-z0-9]+)+)?)+)?)') != \"\"",message="a valid name is required. valid names must contain lowercase alphanumeric characters separated only by the \".\", \"_\", \"__\", \"-\" characters."
+	// +kubebuilder:validation:XValidation:rule="self.find('(@.*:)') != \"\" || self.find(':.*$') != \"\"",message="must end with a digest or a tag"
+	// +kubebuilder:validation:XValidation:rule="self.find('(@.*:)') == \"\" ? (self.find(':.*$') != \"\" ? self.find(':.*$').substring(1).size() <= 127 : true) : true",message="tag is invalid. the tag must not be more than 127 characters"
+	// +kubebuilder:validation:XValidation:rule="self.find('(@.*:)') == \"\" ? (self.find(':.*$') != \"\" ? self.find(':.*$').matches(':[\\\\w][\\\\w.-]*$') : true) : true",message="tag is invalid. valid tags must begin with a word character (alphanumeric + \"_\") followed by word characters or \".\", and \"-\" characters"
+	// +kubebuilder:validation:XValidation:rule="self.find('(@.*:)') != \"\" ? self.find('(@.*:)').matches('(@[A-Za-z][A-Za-z0-9]*([-_+.][A-Za-z][A-Za-z0-9]*)*[:])') : true",message="digest algorithm is not valid. valid algorithms must start with an uppercase or lowercase alpha character followed by alphanumeric characters and may contain the \"-\", \"_\", \"+\", and \".\" characters."
+	// +kubebuilder:validation:XValidation:rule="self.find('(@.*:)') != \"\" ? self.find(':.*$').substring(1).size() >= 32 : true",message="digest is not valid. the encoded string must be at least 32 characters"
+	// +kubebuilder:validation:XValidation:rule="self.find('(@.*:)') != \"\" ? self.find(':.*$').matches(':[0-9A-Fa-f]*$') : true",message="digest is not valid. the encoded string must only contain hex characters (A-F, a-f, 0-9)"
+	Ref string `json:"ref,omitempty"`
+	// NOTE: the validation rules above are taken from
+	// https://github.com/operator-framework/operator-controller/blob/475e1341d0aa045c4fcb6a93a1ffeb2d16484ca7/api/v1/clustercatalog_types.go#L275-L321
+
+	// Future fields could include:
+	//   - ImagePullSecrets
+	//   - PullPolicy
+}
+
+// Source defines where the MCP server's container image (or other source types in the future) is located.
+// +kubebuilder:validation:XValidation:rule="self.type == 'ContainerImage' ? has(self.containerImage) : !has(self.containerImage)",message="containerImage must be set when type is ContainerImage and must not be set otherwise"
+type Source struct {
+	// Type is a required field that configures how the MCP server should be sourced.
+	// Allowed values are: ContainerImage.
+	// When set to ContainerImage, the MCP server will be sourced directly from an OCI
+	// container image following the configuration specified in containerImage.
+	// +kubebuilder:validation:Required
+	Type SourceType `json:"type,omitempty"`
+
+	// ContainerImage specifies container image details when Type is ContainerImage.
+	// +optional
+	ContainerImage *ContainerImageSource `json:"containerImage,omitempty"`
+}
+
+// StorageType defines the type of storage mount.
+// +kubebuilder:validation:Enum=ConfigMap;Secret
+type StorageType string
+
+const (
+	// StorageTypeConfigMap indicates a ConfigMap volume source.
+	StorageTypeConfigMap StorageType = "ConfigMap"
+	// StorageTypeSecret indicates a Secret volume source.
+	StorageTypeSecret StorageType = "Secret"
+)
+
+// MountPermissions defines the access permissions for a volume mount.
+// +kubebuilder:validation:Enum=ReadOnly;ReadWrite;RecursiveReadOnly
+type MountPermissions string
+
+const (
+	// MountPermissionsReadOnly indicates the mount is read-only.
+	MountPermissionsReadOnly MountPermissions = "ReadOnly"
+	// MountPermissionsReadWrite indicates the mount is read-write.
+	MountPermissionsReadWrite MountPermissions = "ReadWrite"
+	// MountPermissionsRecursiveReadOnly indicates the mount and all its submounts are recursively read-only.
+	// This provides stronger guarantees than ReadOnly alone.
+	MountPermissionsRecursiveReadOnly MountPermissions = "RecursiveReadOnly"
+)
+
+// StorageSource defines the source of the storage to mount (ConfigMap or Secret).
+// +kubebuilder:validation:XValidation:rule="self.type == 'ConfigMap' ? has(self.configMap) : !has(self.configMap)",message="configMap must be set when type is ConfigMap and must not be set otherwise"
+// +kubebuilder:validation:XValidation:rule="self.type == 'Secret' ? has(self.secret) : !has(self.secret)",message="secret must be set when type is Secret and must not be set otherwise"
+type StorageSource struct {
+	// Type is a required field that specifies the type of volume source.
+	// Allowed values are: ConfigMap, Secret.
+	// This determines which volume source field (configMap or secret) should be configured.
+	// +kubebuilder:validation:Required
+	Type StorageType `json:"type,omitempty"`
+
+	// ConfigMap specifies a ConfigMap volume source (when Type is ConfigMap).
+	// Uses native Kubernetes ConfigMapVolumeSource type for full feature parity.
+	// +optional
+	ConfigMap *corev1.ConfigMapVolumeSource `json:"configMap,omitempty"`
+
+	// Secret specifies a Secret volume source (when Type is Secret).
+	// Uses native Kubernetes SecretVolumeSource type for full feature parity.
+	// +optional
+	Secret *corev1.SecretVolumeSource `json:"secret,omitempty"`
+}
+
+// StorageMount defines a storage mount combining volume source and mount configuration.
+// The Path and Permissions fields apply to all storage types, while Source contains
+// the type-specific configuration (ConfigMap or Secret).
+type StorageMount struct {
+	// Path is a required field that specifies where the volume should be mounted in the container.
+	// Must be an absolute path (starting with /).
+	// The ConfigMap or Secret data will be accessible to the MCP server process at this location.
+	// Must be between 1 and 4096 characters, start with '/', and must not contain ':'.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
-	Image string `json:"image"`
+	// +kubebuilder:validation:MaxLength=4096
+	// +kubebuilder:validation:XValidation:rule="self.startsWith('/')",message="path must be an absolute path (must start with '/')"
+	// +kubebuilder:validation:XValidation:rule="!self.contains(':')",message="path must not contain ':' character"
+	Path string `json:"path,omitempty"`
 
-	// Port is the port number on which the MCP server listens for connections.
+	// Permissions specifies the access permissions for the mount.
+	// Allowed values are ReadOnly, ReadWrite, and RecursiveReadOnly.
+	// When set to ReadOnly, the mount is read-only.
+	// When set to ReadWrite, the mount is read-write.
+	// When set to RecursiveReadOnly, the mount and all submounts are recursively read-only.
+	// Defaults to ReadOnly for ConfigMap and Secret mounts.
+	// +optional
+	// +kubebuilder:default=ReadOnly
+	Permissions MountPermissions `json:"permissions,omitempty"`
+
+	// Source defines where the storage data comes from (ConfigMap or Secret).
+	// +kubebuilder:validation:Required
+	Source StorageSource `json:"source,omitzero"`
+}
+
+// ServerConfig defines how the MCP server should be configured when it runs.
+type ServerConfig struct {
+	// Port is a required field that specifies the port number on which the MCP server listens for connections.
 	// Must be between 1 and 65535.
-	// Should match the port the MCP server container exposes.
-	// +required
+	// This should match the port that the MCP server container exposes and will be used for
+	// configuring the Kubernetes Service.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
-	Port int32 `json:"port"`
+	Port int32 `json:"port,omitempty"`
 
-	// Args are additional command line arguments for the MCP server container.
+	// Arguments are command line arguments for the MCP server container.
 	// Use this to pass configuration flags to the server.
 	// Example: ["--config", "/etc/mcp-config/config.toml", "--verbose"]
+	// When not specified, the container image's default arguments (CMD/ENTRYPOINT) are used.
+	// An empty array [] is allowed and will override the container image's default arguments with no arguments.
+	// Empty strings within the array are not allowed.
 	// +optional
-	Args []string `json:"args,omitempty"`
-
-	// ConfigMapRef references a ConfigMap containing configuration file(s).
-	// The ConfigMap will be mounted as a read-only volume.
-	// Use ConfigMapMountPath to specify where to mount it (defaults to /etc/mcp-config).
-	// Use ConfigMapVolumeName to specify the volume name (defaults to mcp-config).
-	// Use the Args field to point the server to the config file.
-	// Example:
-	//   configMapRef:
-	//     name: my-server-config
-	//   configMapMountPath: /etc/mcp-config
-	//   configMapVolumeName: mcp-config
-	//   args:
-	//     - --config
-	//     - /etc/mcp-config/config.toml
-	// +optional
-	ConfigMapRef *corev1.LocalObjectReference `json:"configMapRef,omitempty"`
-
-	// ConfigMapMountPath specifies the path where the ConfigMap should be mounted.
-	// Only used when ConfigMapRef is set. Defaults to /etc/mcp-config if not specified.
-	// +optional
-	ConfigMapMountPath string `json:"configMapMountPath,omitempty"`
-
-	// ConfigMapVolumeName specifies the name of the volume for the ConfigMap mount.
-	// Only used when ConfigMapRef is set. Defaults to mcp-config if not specified.
-	// +optional
-	ConfigMapVolumeName string `json:"configMapVolumeName,omitempty"`
-
-	// Replicas is the number of MCP server pod replicas to run.
-	// Defaults to 1 if not specified.
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	Replicas *int32 `json:"replicas,omitempty"`
-
-	// ServiceAccountName is the name of the ServiceAccount to use for the MCP server pods.
-	// The ServiceAccount should have appropriate RBAC permissions for the MCP server's operations.
-	// If not specified, the default ServiceAccount for the namespace will be used.
-	// Example: For kubernetes-mcp-server with read-only access, create a ServiceAccount
-	// and bind it to the 'view' ClusterRole.
-	// +optional
-	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+	// +kubebuilder:validation:XValidation:rule="self.all(arg, arg.size() > 0)",message="arguments must not contain empty strings"
+	Arguments []string `json:"arguments,omitempty"`
 
 	// Env is a list of environment variables to set in the MCP server container.
 	// Supports the full Kubernetes EnvVar API including valueFrom for secrets and configmaps.
@@ -106,6 +189,49 @@ type MCPServerSpec struct {
 	// +optional
 	EnvFrom []corev1.EnvFromSource `json:"envFrom,omitempty"`
 
+	// Storage defines storage mounts for ConfigMaps and Secrets.
+	// Each item uses native Kubernetes volume source types for consistency and feature parity.
+	// If specified, must contain at least 1 item. Maximum 64 items.
+	// +optional
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=64
+	Storage []StorageMount `json:"storage,omitempty"`
+
+	// Path is the HTTP path where the MCP server listens for SSE/Streamable HTTP connections.
+	// This path is appended to the service address in the status URL.
+	// Must be a valid URI path component starting with '/'.
+	// Maximum 253 characters. Cannot contain spaces, control characters, or query/fragment separators (? #).
+	// Examples: /mcp, /api/v1/mcp, /services/mcp-server
+	// Defaults to /mcp if not specified.
+	// +optional
+	// +kubebuilder:default="/mcp"
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:XValidation:rule="self.startsWith('/')",message="path must start with '/'"
+	// +kubebuilder:validation:XValidation:rule="!self.contains(' ')",message="path must not contain spaces"
+	// +kubebuilder:validation:XValidation:rule="!self.contains('?')",message="path must not contain query string separator '?'"
+	// +kubebuilder:validation:XValidation:rule="!self.contains('#')",message="path must not contain fragment separator '#'"
+	// +kubebuilder:validation:XValidation:rule="!self.contains('\\n') && !self.contains('\\r') && !self.contains('\\t')",message="path must not contain control characters (newlines, tabs)"
+	Path string `json:"path,omitempty"`
+}
+
+// SecurityConfig defines security-related configuration.
+// If not specified, default security settings will be applied.
+// See individual field documentation for specific defaults.
+type SecurityConfig struct {
+	// ServiceAccountName is the name of the ServiceAccount to use for the MCP server pods.
+	// The ServiceAccount should have appropriate RBAC permissions for the MCP server's operations.
+	// If not specified, the default ServiceAccount for the namespace will be used.
+	// Must be a string that follows the DNS1123 subdomain format.
+	// Must be at most 253 characters in length, and must consist only of lower case alphanumeric characters, '-'
+	// and '.', and must start and end with an alphanumeric character.
+	// Example: For kubernetes-mcp-server with read-only access, create a ServiceAccount
+	// and bind it to the 'view' ClusterRole.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:XValidation:rule="self == '' || !format.dns1123Subdomain().validate(self).hasValue()",message="serviceAccountName must be a valid DNS subdomain name: a lowercase RFC 1123 subdomain must consist of lower case alphanumeric characters, '-' or '.', and must start and end with an alphanumeric character."
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+
 	// PodSecurityContext specifies the security context for the MCP server pod.
 	// +optional
 	PodSecurityContext *corev1.PodSecurityContext `json:"podSecurityContext,omitempty"`
@@ -113,36 +239,43 @@ type MCPServerSpec struct {
 	// SecurityContext specifies the security context for the MCP server container.
 	// +optional
 	SecurityContext *corev1.SecurityContext `json:"securityContext,omitempty"`
+}
 
-	// SecretRef references a Secret containing credentials
-	// The Secret will be mounted as a read-only volume.
-	// Use SecretMountPath to specify where to mount it.
-	// Use SecretVolumeName to specify the volume name.
-	// Use SecretKey to specify the key of the Secret to mount.
+// RuntimeConfig defines runtime management configuration for the MCP server.
+// If not specified, default runtime settings will be applied.
+// See individual field documentation for specific defaults.
+type RuntimeConfig struct {
+	// Replicas is the number of MCP server pod replicas to run.
+	// Defaults to 1 if not specified.
+	// Set to 0 to scale down the deployment.
 	// +optional
-	SecretRef *corev1.LocalObjectReference `json:"secretRef,omitempty"`
+	// +kubebuilder:validation:Minimum=0
+	Replicas *int32 `json:"replicas,omitempty"`
 
-	// SecretMountPath specifies the path where the Secret should be mounted.
-	// Only used when SecretRef is set. Defaults to /etc/mcp-secrets if not specified.
+	// Security defines security-related configuration.
+	// If not specified, default security settings will be applied.
 	// +optional
-	SecretMountPath string `json:"secretMountPath,omitempty"`
+	Security SecurityConfig `json:"security,omitzero"`
+}
 
-	// SecretKey specifies the key of the Secret to mount.
-	// Only used when SecretRef is set.
-	// +optional
-	SecretKey string `json:"secretKey,omitempty"`
+// MCPServerSpec defines the desired state of MCPServer.
+type MCPServerSpec struct {
+	// Source is a required field that defines where the MCP server should be sourced from.
+	// Currently supports container images, with potential for additional source types in the future.
+	// This configuration determines how the MCP server will be deployed and run.
+	// +kubebuilder:validation:Required
+	Source Source `json:"source,omitzero"`
 
-	// SecretVolumeName specifies the name of the volume for the Secret mount.
-	// Only used when SecretRef is set. Defaults to mcp-secrets if not specified.
-	// +optional
-	SecretVolumeName string `json:"secretVolumeName,omitempty"`
+	// Config is a required field that defines how the MCP server should be configured when it runs.
+	// This includes runtime settings such as the server port, command-line arguments,
+	// environment variables, and storage mounts.
+	// +kubebuilder:validation:Required
+	Config ServerConfig `json:"config,omitzero"`
 
-	// Path is the HTTP path where the MCP server listens for SSE/Streamable HTTP connections.
-	// This path is appended to the service address in the status URL.
-	// Defaults to /mcp if not specified.
+	// Runtime defines runtime management configuration.
+	// If not specified, default runtime settings will be applied.
 	// +optional
-	// +kubebuilder:default="/mcp"
-	Path string `json:"path,omitempty"`
+	Runtime RuntimeConfig `json:"runtime,omitzero"`
 }
 
 // MCPServerAddress contains the address information for the MCPServer.
@@ -175,10 +308,10 @@ type MCPServerStatus struct {
 	// Conditions represent the current state of the MCPServer resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
 	//
-	// Standard condition types include:
-	// - "Ready": the resource is fully functional and available
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
+	// Standard condition types include "Ready", "Progressing", and "Degraded".
+	// The "Ready" condition indicates the resource is fully functional and available.
+	// The "Progressing" condition indicates the resource is being created or updated.
+	// The "Degraded" condition indicates the resource failed to reach or maintain its desired state.
 	//
 	// The status of each condition is one of True, False, or Unknown.
 	// +listType=map
@@ -190,8 +323,8 @@ type MCPServerStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
-// +kubebuilder:printcolumn:name="Image",type=string,JSONPath=`.spec.image`
-// +kubebuilder:printcolumn:name="Port",type=integer,JSONPath=`.spec.port`
+// +kubebuilder:printcolumn:name="Image",type=string,JSONPath=`.spec.source.containerImage.ref`
+// +kubebuilder:printcolumn:name="Port",type=integer,JSONPath=`.spec.config.port`
 // +kubebuilder:printcolumn:name="Address",type=string,JSONPath=`.status.address.url`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 

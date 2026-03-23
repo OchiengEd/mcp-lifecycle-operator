@@ -59,8 +59,15 @@ var _ = Describe("MCPServer Controller", func() {
 						Namespace: "default",
 					},
 					Spec: mcpv1alpha1.MCPServerSpec{
-						Image: "test-image:latest",
-						Port:  8080,
+						Source: mcpv1alpha1.Source{
+							Type: mcpv1alpha1.SourceTypeContainerImage,
+							ContainerImage: &mcpv1alpha1.ContainerImageSource{
+								Ref: "docker.io/library/test-image:latest",
+							},
+						},
+						Config: mcpv1alpha1.ServerConfig{
+							Port: 8080,
+						},
 					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
@@ -109,11 +116,18 @@ var _ = Describe("MCPServer Controller", func() {
 					Namespace: "default",
 				},
 				Spec: mcpv1alpha1.MCPServerSpec{
-					Image: "test-image:latest",
-					Port:  8080,
-					Env: []corev1.EnvVar{
-						{Name: "TOKEN", Value: "test-token"},
-						{Name: "LOG_LEVEL", Value: "debug"},
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+						Env: []corev1.EnvVar{
+							{Name: "TOKEN", Value: "test-token"},
+							{Name: "LOG_LEVEL", Value: "debug"},
+						},
 					},
 				},
 			}
@@ -169,7 +183,7 @@ var _ = Describe("MCPServer Controller", func() {
 			mcpServer := &mcpv1alpha1.MCPServer{}
 			err = k8sClient.Get(ctx, typeNamespacedName, mcpServer)
 			Expect(err).NotTo(HaveOccurred())
-			mcpServer.Spec.Env = []corev1.EnvVar{
+			mcpServer.Spec.Config.Env = []corev1.EnvVar{
 				{Name: "TOKEN", Value: "new-token"},
 				{Name: "NEW_VAR", Value: "new-value"},
 			}
@@ -220,9 +234,16 @@ var _ = Describe("MCPServer Controller", func() {
 					Namespace: "default",
 				},
 				Spec: mcpv1alpha1.MCPServerSpec{
-					Image: "test-image:latest",
-					Port:  8080,
-					Args:  []string{"--verbose", "--port=8080"},
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port:      8080,
+						Arguments: []string{"--verbose", "--port=8080"},
+					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
@@ -249,7 +270,7 @@ var _ = Describe("MCPServer Controller", func() {
 			By("Removing args from the MCPServer")
 			mcpServer := &mcpv1alpha1.MCPServer{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, mcpServer)).To(Succeed())
-			mcpServer.Spec.Args = nil
+			mcpServer.Spec.Config.Arguments = nil
 			Expect(k8sClient.Update(ctx, mcpServer)).To(Succeed())
 
 			By("Reconciling again to pick up the removal")
@@ -292,9 +313,20 @@ var _ = Describe("MCPServer Controller", func() {
 					Namespace: "default",
 				},
 				Spec: mcpv1alpha1.MCPServerSpec{
-					Image:              "test-image:latest",
-					Port:               8080,
-					ServiceAccountName: "my-sa",
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+					},
+					Runtime: mcpv1alpha1.RuntimeConfig{
+						Security: mcpv1alpha1.SecurityConfig{
+							ServiceAccountName: "my-sa",
+						},
+					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
@@ -321,7 +353,9 @@ var _ = Describe("MCPServer Controller", func() {
 			By("Removing serviceAccountName from the MCPServer")
 			mcpServer := &mcpv1alpha1.MCPServer{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, mcpServer)).To(Succeed())
-			mcpServer.Spec.ServiceAccountName = ""
+			// Remove the entire Runtime config to avoid MinProperties validation error
+			// since RuntimeConfig only had Security set, which only had ServiceAccountName
+			mcpServer.Spec.Runtime = mcpv1alpha1.RuntimeConfig{}
 			Expect(k8sClient.Update(ctx, mcpServer)).To(Succeed())
 
 			By("Reconciling again to pick up the removal")
@@ -335,7 +369,8 @@ var _ = Describe("MCPServer Controller", func() {
 				Namespace: "default",
 			}, deployment)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(deployment.Spec.Template.Spec.ServiceAccountName).To(Equal("default"))
+			// When serviceAccountName is removed, we don't set it - let Kubernetes default it
+			Expect(deployment.Spec.Template.Spec.ServiceAccountName).To(BeEmpty())
 		})
 	})
 
@@ -366,11 +401,22 @@ var _ = Describe("MCPServer Controller", func() {
 					Namespace: "default",
 				},
 				Spec: mcpv1alpha1.MCPServerSpec{
-					Image: "test-image:latest",
-					Port:  8080,
-					SecurityContext: &corev1.SecurityContext{
-						RunAsUser:  &runAsUser,
-						RunAsGroup: &runAsGroup,
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+					},
+					Runtime: mcpv1alpha1.RuntimeConfig{
+						Security: mcpv1alpha1.SecurityConfig{
+							SecurityContext: &corev1.SecurityContext{
+								RunAsUser:  &runAsUser,
+								RunAsGroup: &runAsGroup,
+							},
+						},
 					},
 				},
 			}
@@ -407,11 +453,22 @@ var _ = Describe("MCPServer Controller", func() {
 					Namespace: "default",
 				},
 				Spec: mcpv1alpha1.MCPServerSpec{
-					Image: "test-image:latest",
-					Port:  8080,
-					PodSecurityContext: &corev1.PodSecurityContext{
-						RunAsUser: &runAsUser,
-						FSGroup:   &fsGroup,
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+					},
+					Runtime: mcpv1alpha1.RuntimeConfig{
+						Security: mcpv1alpha1.SecurityConfig{
+							PodSecurityContext: &corev1.PodSecurityContext{
+								RunAsUser: &runAsUser,
+								FSGroup:   &fsGroup,
+							},
+						},
 					},
 				},
 			}
@@ -449,14 +506,25 @@ var _ = Describe("MCPServer Controller", func() {
 					Namespace: "default",
 				},
 				Spec: mcpv1alpha1.MCPServerSpec{
-					Image: "test-image:latest",
-					Port:  8080,
-					PodSecurityContext: &corev1.PodSecurityContext{
-						RunAsUser: &runAsUser,
-						FSGroup:   &fsGroup,
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
 					},
-					SecurityContext: &corev1.SecurityContext{
-						ReadOnlyRootFilesystem: &readOnly,
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+					},
+					Runtime: mcpv1alpha1.RuntimeConfig{
+						Security: mcpv1alpha1.SecurityConfig{
+							PodSecurityContext: &corev1.PodSecurityContext{
+								RunAsUser: &runAsUser,
+								FSGroup:   &fsGroup,
+							},
+							SecurityContext: &corev1.SecurityContext{
+								ReadOnlyRootFilesystem: &readOnly,
+							},
+						},
 					},
 				},
 			}
@@ -495,8 +563,15 @@ var _ = Describe("MCPServer Controller", func() {
 					Namespace: "default",
 				},
 				Spec: mcpv1alpha1.MCPServerSpec{
-					Image: "test-image:latest",
-					Port:  8080,
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
@@ -565,9 +640,18 @@ var _ = Describe("MCPServer Controller", func() {
 					Namespace: "default",
 				},
 				Spec: mcpv1alpha1.MCPServerSpec{
-					Image:    "test-image:latest",
-					Port:     8080,
-					Replicas: ptr.To(int32(3)),
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+					},
+					Runtime: mcpv1alpha1.RuntimeConfig{
+						Replicas: ptr.To(int32(3)),
+					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
@@ -597,8 +681,15 @@ var _ = Describe("MCPServer Controller", func() {
 					Namespace: "default",
 				},
 				Spec: mcpv1alpha1.MCPServerSpec{
-					Image: "test-image:latest",
-					Port:  8080,
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
@@ -621,6 +712,47 @@ var _ = Describe("MCPServer Controller", func() {
 			Expect(*deployment.Spec.Replicas).To(Equal(int32(1)))
 		})
 
+		It("should allow 0 replicas for scale-to-zero", func() {
+			resource := &mcpv1alpha1.MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+					},
+					Runtime: mcpv1alpha1.RuntimeConfig{
+						Replicas: ptr.To(int32(0)),
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			controllerReconciler := &MCPServerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			deployment := &appsv1.Deployment{}
+			err = k8sClient.Get(ctx, client.ObjectKey{
+				Name:      resourceName,
+				Namespace: "default",
+			}, deployment)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(*deployment.Spec.Replicas).To(Equal(int32(0)))
+		})
+
 		It("should update deployment when replicas changes", func() {
 			resource := &mcpv1alpha1.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
@@ -628,9 +760,18 @@ var _ = Describe("MCPServer Controller", func() {
 					Namespace: "default",
 				},
 				Spec: mcpv1alpha1.MCPServerSpec{
-					Image:    "test-image:latest",
-					Port:     8080,
-					Replicas: ptr.To(int32(2)),
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+					},
+					Runtime: mcpv1alpha1.RuntimeConfig{
+						Replicas: ptr.To(int32(2)),
+					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
@@ -657,7 +798,7 @@ var _ = Describe("MCPServer Controller", func() {
 			By("Updating replicas to 5")
 			mcpServer := &mcpv1alpha1.MCPServer{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, mcpServer)).To(Succeed())
-			mcpServer.Spec.Replicas = ptr.To(int32(5))
+			mcpServer.Spec.Runtime.Replicas = ptr.To(int32(5))
 			Expect(k8sClient.Update(ctx, mcpServer)).To(Succeed())
 
 			By("Reconciling again to pick up the change")
@@ -681,9 +822,18 @@ var _ = Describe("MCPServer Controller", func() {
 					Namespace: "default",
 				},
 				Spec: mcpv1alpha1.MCPServerSpec{
-					Image:    "test-image:latest",
-					Port:     8080,
-					Replicas: ptr.To(int32(3)),
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+					},
+					Runtime: mcpv1alpha1.RuntimeConfig{
+						Replicas: ptr.To(int32(3)),
+					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
@@ -710,7 +860,9 @@ var _ = Describe("MCPServer Controller", func() {
 			By("Removing replicas from the MCPServer")
 			mcpServer := &mcpv1alpha1.MCPServer{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, mcpServer)).To(Succeed())
-			mcpServer.Spec.Replicas = nil
+			// Remove the entire Runtime config to avoid MinProperties validation error
+			// since RuntimeConfig only had Replicas set
+			mcpServer.Spec.Runtime = mcpv1alpha1.RuntimeConfig{}
 			Expect(k8sClient.Update(ctx, mcpServer)).To(Succeed())
 
 			By("Reconciling again to pick up the removal")
@@ -745,17 +897,24 @@ var _ = Describe("MCPServer Controller", func() {
 					Namespace: "default",
 				},
 				Spec: mcpv1alpha1.MCPServerSpec{
-					Image: "test-image:latest",
-					Port:  8080,
-					EnvFrom: []corev1.EnvFromSource{
-						{
-							SecretRef: &corev1.SecretEnvSource{
-								LocalObjectReference: corev1.LocalObjectReference{Name: "my-secret"},
-							},
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
 						},
-						{
-							ConfigMapRef: &corev1.ConfigMapEnvSource{
-								LocalObjectReference: corev1.LocalObjectReference{Name: "my-configmap"},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+						EnvFrom: []corev1.EnvFromSource{
+							{
+								SecretRef: &corev1.SecretEnvSource{
+									LocalObjectReference: corev1.LocalObjectReference{Name: "my-secret"},
+								},
+							},
+							{
+								ConfigMapRef: &corev1.ConfigMapEnvSource{
+									LocalObjectReference: corev1.LocalObjectReference{Name: "my-configmap"},
+								},
 							},
 						},
 					},
@@ -805,7 +964,7 @@ var _ = Describe("MCPServer Controller", func() {
 			mcpServer := &mcpv1alpha1.MCPServer{}
 			err := k8sClient.Get(ctx, typeNamespacedName, mcpServer)
 			Expect(err).NotTo(HaveOccurred())
-			mcpServer.Spec.Env = []corev1.EnvVar{
+			mcpServer.Spec.Config.Env = []corev1.EnvVar{
 				{Name: "EXTRA_VAR", Value: "extra-value"},
 			}
 			Expect(k8sClient.Update(ctx, mcpServer)).To(Succeed())
@@ -836,328 +995,6 @@ var _ = Describe("MCPServer Controller", func() {
 		})
 	})
 
-	Context("When reconciling a resource with secretRef", func() {
-		const resourceName = "test-resource-secret"
-		const secretName = "my-secret"
-
-		ctx := context.Background()
-
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: "default",
-		}
-
-		BeforeEach(func() {
-			By("creating the secret referenced by SecretRef")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      secretName,
-					Namespace: "default",
-				},
-				Data: map[string][]byte{
-					"token":  []byte("test-token-value"),
-					"ca.pem": []byte("test-ca-cert-data"),
-				},
-			}
-			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, secret))).To(Succeed())
-		})
-
-		AfterEach(func() {
-			resource := &mcpv1alpha1.MCPServer{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-
-			secret := &corev1.Secret{}
-			err = k8sClient.Get(ctx, client.ObjectKey{Name: secretName, Namespace: "default"}, secret)
-			if err == nil {
-				Expect(k8sClient.Delete(ctx, secret)).To(Succeed())
-			}
-		})
-
-		It("should mount the secret volume with default name and path", func() {
-			resource := &mcpv1alpha1.MCPServer{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      resourceName,
-					Namespace: "default",
-				},
-				Spec: mcpv1alpha1.MCPServerSpec{
-					Image: "test-image:latest",
-					Port:  8080,
-					SecretRef: &corev1.LocalObjectReference{
-						Name: "my-secret",
-					},
-				},
-			}
-			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-
-			controllerReconciler := &MCPServerReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			deployment := &appsv1.Deployment{}
-			err = k8sClient.Get(ctx, client.ObjectKey{
-				Name:      resourceName,
-				Namespace: "default",
-			}, deployment)
-			Expect(err).NotTo(HaveOccurred())
-
-			volumes := deployment.Spec.Template.Spec.Volumes
-			Expect(volumes).To(HaveLen(1))
-			Expect(volumes[0].Name).To(Equal("mcp-secrets"))
-			Expect(volumes[0].Secret).NotTo(BeNil())
-			Expect(volumes[0].Secret.SecretName).To(Equal("my-secret"))
-
-			mounts := deployment.Spec.Template.Spec.Containers[0].VolumeMounts
-			Expect(mounts).To(HaveLen(1))
-			Expect(mounts[0].Name).To(Equal("mcp-secrets"))
-			Expect(mounts[0].MountPath).To(Equal("/etc/mcp-secrets"))
-			Expect(mounts[0].ReadOnly).To(BeTrue())
-		})
-
-		It("should use custom volume name and mount path when specified", func() {
-			resource := &mcpv1alpha1.MCPServer{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      resourceName,
-					Namespace: "default",
-				},
-				Spec: mcpv1alpha1.MCPServerSpec{
-					Image: "test-image:latest",
-					Port:  8080,
-					SecretRef: &corev1.LocalObjectReference{
-						Name: "my-secret",
-					},
-					SecretVolumeName: "custom-vol",
-					SecretMountPath:  "/custom/path",
-				},
-			}
-			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-
-			controllerReconciler := &MCPServerReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			deployment := &appsv1.Deployment{}
-			err = k8sClient.Get(ctx, client.ObjectKey{
-				Name:      resourceName,
-				Namespace: "default",
-			}, deployment)
-			Expect(err).NotTo(HaveOccurred())
-
-			volumes := deployment.Spec.Template.Spec.Volumes
-			Expect(volumes).To(HaveLen(1))
-			Expect(volumes[0].Name).To(Equal("custom-vol"))
-			Expect(volumes[0].Secret.SecretName).To(Equal("my-secret"))
-
-			mounts := deployment.Spec.Template.Spec.Containers[0].VolumeMounts
-			Expect(mounts).To(HaveLen(1))
-			Expect(mounts[0].Name).To(Equal("custom-vol"))
-			Expect(mounts[0].MountPath).To(Equal("/custom/path"))
-		})
-
-		It("should set SubPath on the volume mount when secretKey is specified", func() {
-			resource := &mcpv1alpha1.MCPServer{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      resourceName,
-					Namespace: "default",
-				},
-				Spec: mcpv1alpha1.MCPServerSpec{
-					Image: "test-image:latest",
-					Port:  8080,
-					SecretRef: &corev1.LocalObjectReference{
-						Name: "my-secret",
-					},
-					SecretKey:       "ca.pem",
-					SecretMountPath: "/app/certs/ca.pem",
-				},
-			}
-			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-
-			controllerReconciler := &MCPServerReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			deployment := &appsv1.Deployment{}
-			err = k8sClient.Get(ctx, client.ObjectKey{
-				Name:      resourceName,
-				Namespace: "default",
-			}, deployment)
-			Expect(err).NotTo(HaveOccurred())
-
-			volumes := deployment.Spec.Template.Spec.Volumes
-			Expect(volumes).To(HaveLen(1))
-			Expect(volumes[0].Name).To(Equal("mcp-secrets"))
-			Expect(volumes[0].Secret).NotTo(BeNil())
-			Expect(volumes[0].Secret.SecretName).To(Equal("my-secret"))
-
-			mounts := deployment.Spec.Template.Spec.Containers[0].VolumeMounts
-			Expect(mounts).To(HaveLen(1))
-			Expect(mounts[0].Name).To(Equal("mcp-secrets"))
-			Expect(mounts[0].MountPath).To(Equal("/app/certs/ca.pem"))
-			Expect(mounts[0].SubPath).To(Equal("ca.pem"))
-			Expect(mounts[0].ReadOnly).To(BeTrue())
-		})
-
-		It("should not set SubPath when secretKey is not specified", func() {
-			resource := &mcpv1alpha1.MCPServer{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      resourceName,
-					Namespace: "default",
-				},
-				Spec: mcpv1alpha1.MCPServerSpec{
-					Image: "test-image:latest",
-					Port:  8080,
-					SecretRef: &corev1.LocalObjectReference{
-						Name: "my-secret",
-					},
-				},
-			}
-			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-
-			controllerReconciler := &MCPServerReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			deployment := &appsv1.Deployment{}
-			err = k8sClient.Get(ctx, client.ObjectKey{
-				Name:      resourceName,
-				Namespace: "default",
-			}, deployment)
-			Expect(err).NotTo(HaveOccurred())
-
-			mounts := deployment.Spec.Template.Spec.Containers[0].VolumeMounts
-			Expect(mounts).To(HaveLen(1))
-			Expect(mounts[0].SubPath).To(BeEmpty())
-		})
-
-		It("should mount both secret and configmap volumes together", func() {
-			resource := &mcpv1alpha1.MCPServer{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      resourceName,
-					Namespace: "default",
-				},
-				Spec: mcpv1alpha1.MCPServerSpec{
-					Image: "test-image:latest",
-					Port:  8080,
-					SecretRef: &corev1.LocalObjectReference{
-						Name: "my-secret",
-					},
-					ConfigMapRef: &corev1.LocalObjectReference{
-						Name: "my-config",
-					},
-				},
-			}
-			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-
-			controllerReconciler := &MCPServerReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			deployment := &appsv1.Deployment{}
-			err = k8sClient.Get(ctx, client.ObjectKey{
-				Name:      resourceName,
-				Namespace: "default",
-			}, deployment)
-			Expect(err).NotTo(HaveOccurred())
-
-			volumes := deployment.Spec.Template.Spec.Volumes
-			Expect(volumes).To(HaveLen(2))
-
-			mounts := deployment.Spec.Template.Spec.Containers[0].VolumeMounts
-			Expect(mounts).To(HaveLen(2))
-
-			Expect(volumes).To(ContainElement(SatisfyAll(
-				HaveField("Name", "mcp-secrets"),
-				HaveField("VolumeSource.Secret.SecretName", "my-secret"),
-			)))
-			Expect(volumes).To(ContainElement(SatisfyAll(
-				HaveField("Name", "mcp-config"),
-				HaveField("VolumeSource.ConfigMap.Name", "my-config"),
-			)))
-
-			Expect(mounts).To(ContainElement(SatisfyAll(
-				HaveField("Name", "mcp-secrets"),
-				HaveField("MountPath", "/etc/mcp-secrets"),
-				HaveField("ReadOnly", true),
-			)))
-			Expect(mounts).To(ContainElement(SatisfyAll(
-				HaveField("Name", "mcp-config"),
-				HaveField("MountPath", "/etc/mcp-config"),
-				HaveField("ReadOnly", true),
-			)))
-		})
-	})
-
-	Context("When reconciling a resource with a non-existent secret", func() {
-		const resourceName = "test-resource-missing-secret"
-
-		ctx := context.Background()
-
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: "default",
-		}
-
-		AfterEach(func() {
-			resource := &mcpv1alpha1.MCPServer{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			if err == nil {
-				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-			}
-		})
-
-		It("should return a not found error when the referenced secret does not exist", func() {
-			resource := &mcpv1alpha1.MCPServer{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      resourceName,
-					Namespace: "default",
-				},
-				Spec: mcpv1alpha1.MCPServerSpec{
-					Image: "test-image:latest",
-					Port:  8080,
-					SecretRef: &corev1.LocalObjectReference{
-						Name: "nonexistent-secret",
-					},
-				},
-			}
-			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-
-			controllerReconciler := &MCPServerReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).To(HaveOccurred())
-			Expect(errors.IsNotFound(err)).To(BeTrue())
-		})
-	})
 })
 
 var _ = Describe("MCPServer Controller - Address URL", func() {
@@ -1186,8 +1023,15 @@ var _ = Describe("MCPServer Controller - Address URL", func() {
 					Namespace: "default",
 				},
 				Spec: mcpv1alpha1.MCPServerSpec{
-					Image: "test-image:latest",
-					Port:  8080,
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
@@ -1214,8 +1058,15 @@ var _ = Describe("MCPServer Controller - Address URL", func() {
 					Namespace: "default",
 				},
 				Spec: mcpv1alpha1.MCPServerSpec{
-					Image: "test-image:latest",
-					Port:  3001,
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 3001,
+					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
@@ -1242,9 +1093,16 @@ var _ = Describe("MCPServer Controller - Address URL", func() {
 					Namespace: "default",
 				},
 				Spec: mcpv1alpha1.MCPServerSpec{
-					Image: "test-image:latest",
-					Port:  8080,
-					Path:  "/sse",
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+						Path: "/sse",
+					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
@@ -1271,8 +1129,15 @@ var _ = Describe("MCPServer Controller - Address URL", func() {
 					Namespace: "default",
 				},
 				Spec: mcpv1alpha1.MCPServerSpec{
-					Image: "test-image:latest",
-					Port:  8080,
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
@@ -1325,8 +1190,15 @@ var _ = Describe("MCPServer Controller - reconcileDeployment", func() {
 				Namespace: "default",
 			},
 			Spec: mcpv1alpha1.MCPServerSpec{
-				Image: "test-image:latest",
-				Port:  8080,
+				Source: mcpv1alpha1.Source{
+					Type: mcpv1alpha1.SourceTypeContainerImage,
+					ContainerImage: &mcpv1alpha1.ContainerImageSource{
+						Ref: "docker.io/library/test-image:latest",
+					},
+				},
+				Config: mcpv1alpha1.ServerConfig{
+					Port: 8080,
+				},
 			},
 		}
 		Expect(k8sClient.Create(ctx, resource)).To(Succeed())
@@ -1389,8 +1261,15 @@ var _ = Describe("MCPServer Controller - reconcileService", func() {
 				Namespace: "default",
 			},
 			Spec: mcpv1alpha1.MCPServerSpec{
-				Image: "test-image:latest",
-				Port:  8080,
+				Source: mcpv1alpha1.Source{
+					Type: mcpv1alpha1.SourceTypeContainerImage,
+					ContainerImage: &mcpv1alpha1.ContainerImageSource{
+						Ref: "docker.io/library/test-image:latest",
+					},
+				},
+				Config: mcpv1alpha1.ServerConfig{
+					Port: 8080,
+				},
 			},
 		}
 		Expect(k8sClient.Create(ctx, resource)).To(Succeed())
@@ -1501,5 +1380,861 @@ var _ = Describe("determinePhase", func() {
 		phase, condition := determinePhase(deployment, generation)
 		Expect(phase).To(Equal(PhasePending))
 		Expect(condition.Reason).To(Equal("DeploymentProgressing"))
+	})
+})
+
+var _ = Describe("MCPServer Controller - Storage Mounts", func() {
+	ctx := context.Background()
+
+	Context("When reconciling a resource with ConfigMap storage", func() {
+		const resourceName = "test-resource-configmap-storage"
+
+		typeNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: "default",
+		}
+
+		BeforeEach(func() {
+			// Create ConfigMap first
+			configMap := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-configmap",
+					Namespace: "default",
+				},
+				Data: map[string]string{
+					"config.yaml": "test: value",
+				},
+			}
+			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+
+			resource := &mcpv1alpha1.MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+						Storage: []mcpv1alpha1.StorageMount{
+							{
+								Path: "/etc/config",
+								Source: mcpv1alpha1.StorageSource{
+									Type: mcpv1alpha1.StorageTypeConfigMap,
+									ConfigMap: &corev1.ConfigMapVolumeSource{
+										LocalObjectReference: corev1.LocalObjectReference{
+											Name: "test-configmap",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			resource := &mcpv1alpha1.MCPServer{}
+			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			}
+			configMap := &corev1.ConfigMap{}
+			err = k8sClient.Get(ctx, client.ObjectKey{Name: "test-configmap", Namespace: "default"}, configMap)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, configMap)).To(Succeed())
+			}
+		})
+
+		It("should create deployment with ConfigMap volume and mount", func() {
+			controllerReconciler := &MCPServerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			deployment := &appsv1.Deployment{}
+			err = k8sClient.Get(ctx, client.ObjectKey{
+				Name:      resourceName,
+				Namespace: "default",
+			}, deployment)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify volume is created with auto-generated name
+			Expect(deployment.Spec.Template.Spec.Volumes).To(HaveLen(1))
+			volume := deployment.Spec.Template.Spec.Volumes[0]
+			Expect(volume.Name).To(Equal("vol-0"))
+			Expect(volume.VolumeSource.ConfigMap).NotTo(BeNil())
+			Expect(volume.VolumeSource.ConfigMap.Name).To(Equal("test-configmap"))
+
+			// Verify volume mount is created
+			container := deployment.Spec.Template.Spec.Containers[0]
+			Expect(container.VolumeMounts).To(HaveLen(1))
+			volumeMount := container.VolumeMounts[0]
+			Expect(volumeMount.Name).To(Equal("vol-0"))
+			Expect(volumeMount.MountPath).To(Equal("/etc/config"))
+			Expect(volumeMount.ReadOnly).To(BeTrue()) // Default is true
+		})
+	})
+
+	Context("When reconciling a resource with Secret storage", func() {
+		const resourceName = "test-resource-secret-storage"
+
+		typeNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: "default",
+		}
+
+		BeforeEach(func() {
+			// Create Secret first
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-secret",
+					Namespace: "default",
+				},
+				StringData: map[string]string{
+					"token": "secret-value",
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			resource := &mcpv1alpha1.MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+						Storage: []mcpv1alpha1.StorageMount{
+							{
+								Path: "/etc/secret",
+								Source: mcpv1alpha1.StorageSource{
+									Type: mcpv1alpha1.StorageTypeSecret,
+									Secret: &corev1.SecretVolumeSource{
+										SecretName: "test-secret",
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			resource := &mcpv1alpha1.MCPServer{}
+			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			}
+			secret := &corev1.Secret{}
+			err = k8sClient.Get(ctx, client.ObjectKey{Name: "test-secret", Namespace: "default"}, secret)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, secret)).To(Succeed())
+			}
+		})
+
+		It("should create deployment with Secret volume and mount", func() {
+			controllerReconciler := &MCPServerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			deployment := &appsv1.Deployment{}
+			err = k8sClient.Get(ctx, client.ObjectKey{
+				Name:      resourceName,
+				Namespace: "default",
+			}, deployment)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify volume is created with auto-generated name
+			Expect(deployment.Spec.Template.Spec.Volumes).To(HaveLen(1))
+			volume := deployment.Spec.Template.Spec.Volumes[0]
+			Expect(volume.Name).To(Equal("vol-0"))
+			Expect(volume.VolumeSource.Secret).NotTo(BeNil())
+			Expect(volume.VolumeSource.Secret.SecretName).To(Equal("test-secret"))
+
+			// Verify volume mount is created
+			container := deployment.Spec.Template.Spec.Containers[0]
+			Expect(container.VolumeMounts).To(HaveLen(1))
+			volumeMount := container.VolumeMounts[0]
+			Expect(volumeMount.Name).To(Equal("vol-0"))
+			Expect(volumeMount.MountPath).To(Equal("/etc/secret"))
+			Expect(volumeMount.ReadOnly).To(BeTrue()) // Default is true
+		})
+	})
+
+	Context("When reconciling a resource with multiple storage mounts", func() {
+		const resourceName = "test-resource-multi-storage"
+
+		typeNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: "default",
+		}
+
+		BeforeEach(func() {
+			// Create ConfigMap
+			configMap := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-multi-configmap",
+					Namespace: "default",
+				},
+				Data: map[string]string{
+					"config.yaml": "test: value",
+				},
+			}
+			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+
+			// Create Secret
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-multi-secret",
+					Namespace: "default",
+				},
+				StringData: map[string]string{
+					"token": "secret-value",
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			resource := &mcpv1alpha1.MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+						Storage: []mcpv1alpha1.StorageMount{
+							{
+								Path: "/etc/config",
+								Source: mcpv1alpha1.StorageSource{
+									Type: mcpv1alpha1.StorageTypeConfigMap,
+									ConfigMap: &corev1.ConfigMapVolumeSource{
+										LocalObjectReference: corev1.LocalObjectReference{
+											Name: "test-multi-configmap",
+										},
+									},
+								},
+							},
+							{
+								Path: "/etc/secret",
+								Source: mcpv1alpha1.StorageSource{
+									Type: mcpv1alpha1.StorageTypeSecret,
+									Secret: &corev1.SecretVolumeSource{
+										SecretName: "test-multi-secret",
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			resource := &mcpv1alpha1.MCPServer{}
+			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			}
+			configMap := &corev1.ConfigMap{}
+			err = k8sClient.Get(ctx, client.ObjectKey{Name: "test-multi-configmap", Namespace: "default"}, configMap)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, configMap)).To(Succeed())
+			}
+			secret := &corev1.Secret{}
+			err = k8sClient.Get(ctx, client.ObjectKey{Name: "test-multi-secret", Namespace: "default"}, secret)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, secret)).To(Succeed())
+			}
+		})
+
+		It("should create deployment with multiple volumes and mounts with correct names", func() {
+			controllerReconciler := &MCPServerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			deployment := &appsv1.Deployment{}
+			err = k8sClient.Get(ctx, client.ObjectKey{
+				Name:      resourceName,
+				Namespace: "default",
+			}, deployment)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify both volumes are created with auto-generated names
+			Expect(deployment.Spec.Template.Spec.Volumes).To(HaveLen(2))
+
+			volume0 := deployment.Spec.Template.Spec.Volumes[0]
+			Expect(volume0.Name).To(Equal("vol-0"))
+			Expect(volume0.VolumeSource.ConfigMap).NotTo(BeNil())
+			Expect(volume0.VolumeSource.ConfigMap.Name).To(Equal("test-multi-configmap"))
+
+			volume1 := deployment.Spec.Template.Spec.Volumes[1]
+			Expect(volume1.Name).To(Equal("vol-1"))
+			Expect(volume1.VolumeSource.Secret).NotTo(BeNil())
+			Expect(volume1.VolumeSource.Secret.SecretName).To(Equal("test-multi-secret"))
+
+			// Verify both volume mounts are created
+			container := deployment.Spec.Template.Spec.Containers[0]
+			Expect(container.VolumeMounts).To(HaveLen(2))
+
+			volumeMount0 := container.VolumeMounts[0]
+			Expect(volumeMount0.Name).To(Equal("vol-0"))
+			Expect(volumeMount0.MountPath).To(Equal("/etc/config"))
+			Expect(volumeMount0.ReadOnly).To(BeTrue())
+
+			volumeMount1 := container.VolumeMounts[1]
+			Expect(volumeMount1.Name).To(Equal("vol-1"))
+			Expect(volumeMount1.MountPath).To(Equal("/etc/secret"))
+			Expect(volumeMount1.ReadOnly).To(BeTrue())
+		})
+	})
+
+	Context("When reconciling a resource with readOnly set to false", func() {
+		const resourceName = "test-resource-readonly-false"
+
+		typeNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: "default",
+		}
+
+		BeforeEach(func() {
+			// Create ConfigMap
+			configMap := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-configmap-rw",
+					Namespace: "default",
+				},
+				Data: map[string]string{
+					"config.yaml": "test: value",
+				},
+			}
+			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+
+			resource := &mcpv1alpha1.MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+						Storage: []mcpv1alpha1.StorageMount{
+							{
+								Path:        "/etc/config",
+								Permissions: mcpv1alpha1.MountPermissionsReadWrite, // Explicitly set to read-write
+								Source: mcpv1alpha1.StorageSource{
+									Type: mcpv1alpha1.StorageTypeConfigMap,
+									ConfigMap: &corev1.ConfigMapVolumeSource{
+										LocalObjectReference: corev1.LocalObjectReference{
+											Name: "test-configmap-rw",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			resource := &mcpv1alpha1.MCPServer{}
+			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			}
+			configMap := &corev1.ConfigMap{}
+			err = k8sClient.Get(ctx, client.ObjectKey{Name: "test-configmap-rw", Namespace: "default"}, configMap)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, configMap)).To(Succeed())
+			}
+		})
+
+		It("should create deployment with readOnly set to false", func() {
+			controllerReconciler := &MCPServerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			deployment := &appsv1.Deployment{}
+			err = k8sClient.Get(ctx, client.ObjectKey{
+				Name:      resourceName,
+				Namespace: "default",
+			}, deployment)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify volume mount has ReadOnly set to false
+			container := deployment.Spec.Template.Spec.Containers[0]
+			Expect(container.VolumeMounts).To(HaveLen(1))
+			volumeMount := container.VolumeMounts[0]
+			Expect(volumeMount.Name).To(Equal("vol-0"))
+			Expect(volumeMount.MountPath).To(Equal("/etc/config"))
+			Expect(volumeMount.ReadOnly).To(BeFalse()) // Explicitly false, not default
+		})
+	})
+
+	Context("When ConfigMap reference doesn't exist", func() {
+		const resourceName = "test-resource-missing-configmap"
+
+		typeNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: "default",
+		}
+
+		BeforeEach(func() {
+			resource := &mcpv1alpha1.MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+						Storage: []mcpv1alpha1.StorageMount{
+							{
+								Path: "/etc/config",
+								Source: mcpv1alpha1.StorageSource{
+									Type: mcpv1alpha1.StorageTypeConfigMap,
+									ConfigMap: &corev1.ConfigMapVolumeSource{
+										LocalObjectReference: corev1.LocalObjectReference{
+											Name: "nonexistent-configmap",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			resource := &mcpv1alpha1.MCPServer{}
+			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			}
+		})
+
+		It("should fail with 'ConfigMap not found' error", func() {
+			controllerReconciler := &MCPServerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to get ConfigMap"))
+			Expect(err.Error()).To(ContainSubstring("nonexistent-configmap"))
+		})
+	})
+
+	Context("When Secret reference doesn't exist", func() {
+		const resourceName = "test-resource-missing-secret"
+
+		typeNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: "default",
+		}
+
+		BeforeEach(func() {
+			resource := &mcpv1alpha1.MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+						Storage: []mcpv1alpha1.StorageMount{
+							{
+								Path: "/etc/secret",
+								Source: mcpv1alpha1.StorageSource{
+									Type: mcpv1alpha1.StorageTypeSecret,
+									Secret: &corev1.SecretVolumeSource{
+										SecretName: "nonexistent-secret",
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			resource := &mcpv1alpha1.MCPServer{}
+			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			}
+		})
+
+		It("should fail with 'Secret not found' error", func() {
+			controllerReconciler := &MCPServerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to get Secret"))
+			Expect(err.Error()).To(ContainSubstring("nonexistent-secret"))
+		})
+	})
+
+	Context("When ConfigMap is optional and doesn't exist", func() {
+		const resourceName = "test-resource-optional-configmap"
+
+		typeNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: "default",
+		}
+
+		BeforeEach(func() {
+			// Don't create the ConfigMap - it should be optional
+			resource := &mcpv1alpha1.MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+						Storage: []mcpv1alpha1.StorageMount{
+							{
+								Path: "/etc/config",
+								Source: mcpv1alpha1.StorageSource{
+									Type: mcpv1alpha1.StorageTypeConfigMap,
+									ConfigMap: &corev1.ConfigMapVolumeSource{
+										LocalObjectReference: corev1.LocalObjectReference{
+											Name: "optional-configmap",
+										},
+										Optional: ptr.To(true),
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			resource := &mcpv1alpha1.MCPServer{}
+			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			}
+		})
+
+		It("should succeed reconciliation even when ConfigMap doesn't exist", func() {
+			controllerReconciler := &MCPServerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify deployment was created
+			deployment := &appsv1.Deployment{}
+			err = k8sClient.Get(ctx, client.ObjectKey{
+				Name:      resourceName,
+				Namespace: "default",
+			}, deployment)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify volume is created with optional ConfigMap reference
+			Expect(deployment.Spec.Template.Spec.Volumes).To(HaveLen(1))
+			volume := deployment.Spec.Template.Spec.Volumes[0]
+			Expect(volume.VolumeSource.ConfigMap).NotTo(BeNil())
+			Expect(volume.VolumeSource.ConfigMap.Name).To(Equal("optional-configmap"))
+			Expect(volume.VolumeSource.ConfigMap.Optional).NotTo(BeNil())
+			Expect(*volume.VolumeSource.ConfigMap.Optional).To(BeTrue())
+		})
+	})
+
+	Context("When Secret is optional and doesn't exist", func() {
+		const resourceName = "test-resource-optional-secret"
+
+		typeNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: "default",
+		}
+
+		BeforeEach(func() {
+			// Don't create the Secret - it should be optional
+			resource := &mcpv1alpha1.MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+						Storage: []mcpv1alpha1.StorageMount{
+							{
+								Path: "/etc/secret",
+								Source: mcpv1alpha1.StorageSource{
+									Type: mcpv1alpha1.StorageTypeSecret,
+									Secret: &corev1.SecretVolumeSource{
+										SecretName: "optional-secret",
+										Optional:   ptr.To(true),
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			resource := &mcpv1alpha1.MCPServer{}
+			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			}
+		})
+
+		It("should succeed reconciliation even when Secret doesn't exist", func() {
+			controllerReconciler := &MCPServerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify deployment was created
+			deployment := &appsv1.Deployment{}
+			err = k8sClient.Get(ctx, client.ObjectKey{
+				Name:      resourceName,
+				Namespace: "default",
+			}, deployment)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify volume is created with optional Secret reference
+			Expect(deployment.Spec.Template.Spec.Volumes).To(HaveLen(1))
+			volume := deployment.Spec.Template.Spec.Volumes[0]
+			Expect(volume.VolumeSource.Secret).NotTo(BeNil())
+			Expect(volume.VolumeSource.Secret.SecretName).To(Equal("optional-secret"))
+			Expect(volume.VolumeSource.Secret.Optional).NotTo(BeNil())
+			Expect(*volume.VolumeSource.Secret.Optional).To(BeTrue())
+		})
+	})
+
+	Context("When ConfigMap name is empty", func() {
+		const resourceName = "test-resource-empty-configmap-name"
+
+		typeNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: "default",
+		}
+
+		BeforeEach(func() {
+			resource := &mcpv1alpha1.MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+						Storage: []mcpv1alpha1.StorageMount{
+							{
+								Path: "/etc/config",
+								Source: mcpv1alpha1.StorageSource{
+									Type: mcpv1alpha1.StorageTypeConfigMap,
+									ConfigMap: &corev1.ConfigMapVolumeSource{
+										LocalObjectReference: corev1.LocalObjectReference{
+											Name: "", // Empty name
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			resource := &mcpv1alpha1.MCPServer{}
+			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			}
+		})
+
+		It("should fail with 'empty ConfigMap name' error", func() {
+			controllerReconciler := &MCPServerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("configMap name must not be empty"))
+		})
+	})
+
+	Context("When Secret name is empty", func() {
+		const resourceName = "test-resource-empty-secret-name"
+
+		typeNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: "default",
+		}
+
+		BeforeEach(func() {
+			resource := &mcpv1alpha1.MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Source: mcpv1alpha1.Source{
+						Type: mcpv1alpha1.SourceTypeContainerImage,
+						ContainerImage: &mcpv1alpha1.ContainerImageSource{
+							Ref: "docker.io/library/test-image:latest",
+						},
+					},
+					Config: mcpv1alpha1.ServerConfig{
+						Port: 8080,
+						Storage: []mcpv1alpha1.StorageMount{
+							{
+								Path: "/etc/secret",
+								Source: mcpv1alpha1.StorageSource{
+									Type: mcpv1alpha1.StorageTypeSecret,
+									Secret: &corev1.SecretVolumeSource{
+										SecretName: "", // Empty name
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			resource := &mcpv1alpha1.MCPServer{}
+			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			}
+		})
+
+		It("should fail with 'empty Secret name' error", func() {
+			controllerReconciler := &MCPServerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("secret name must not be empty"))
+		})
 	})
 })

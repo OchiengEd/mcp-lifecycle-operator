@@ -4,5 +4,10 @@ metadata:
   name: everything-mcp-server
   namespace: default
 spec:
-  image: quay.io/matzew/mcp-everything:latest
-  port: 3001
+  source:
+    type: ContainerImage
+    containerImage:
+      ref: quay.io/matzew/mcp-everything:latest
+  config:
+    port: 3001
+    path: /mcp

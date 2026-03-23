@@ -58,6 +58,7 @@ type MCPServerReconciler struct {
 // +kubebuilder:rbac:groups=mcp.x-k8s.io,resources=mcpservers/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -106,15 +107,15 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Update status based on Deployment status
 	mcpServer.Status.DeploymentName = existingDeployment.Name
 	mcpServer.Status.ServiceName = mcpServer.Name
-	if mcpServer.Spec.Port > 0 {
-		path := mcpServer.Spec.Path
+	if mcpServer.Spec.Config.Port > 0 {
+		path := mcpServer.Spec.Config.Path
 		if path == "" {
 			path = "/mcp"
 		}
 		mcpServer.Status.Address = &mcpv1alpha1.MCPServerAddress{
 			// TODO: enhance this later to be TLS aware
 			URL: fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s",
-				mcpServer.Name, mcpServer.Namespace, mcpServer.Spec.Port, path),
+				mcpServer.Name, mcpServer.Namespace, mcpServer.Spec.Config.Port, path),
 		}
 	}
 
@@ -274,9 +275,22 @@ func (r *MCPServerReconciler) reconcileDeployment(
 
 // createDeployment creates a Deployment for the MCPServer
 func (r *MCPServerReconciler) createDeployment(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) (*appsv1.Deployment, error) {
+	// Validate source type and extract image reference
+	var imageRef string
+	switch mcpServer.Spec.Source.Type {
+	case mcpv1alpha1.SourceTypeContainerImage:
+		if mcpServer.Spec.Source.ContainerImage == nil {
+			return nil, fmt.Errorf("containerImage must be set when source type is ContainerImage")
+		}
+		imageRef = mcpServer.Spec.Source.ContainerImage.Ref
+	default:
+		return nil, fmt.Errorf("unsupported source type: %s", mcpServer.Spec.Source.Type)
+	}
+
+	// Replicas defaults to 1 when not specified (nil)
 	replicas := int32(1)
-	if mcpServer.Spec.Replicas != nil {
-		replicas = *mcpServer.Spec.Replicas
+	if mcpServer.Spec.Runtime.Replicas != nil {
+		replicas = *mcpServer.Spec.Runtime.Replicas
 	}
 	labels := map[string]string{
 		"app":        "mcp-server",
@@ -285,105 +299,118 @@ func (r *MCPServerReconciler) createDeployment(ctx context.Context, mcpServer *m
 
 	container := corev1.Container{
 		Name:  "mcp-server",
-		Image: mcpServer.Spec.Image,
+		Image: imageRef,
 		Ports: []corev1.ContainerPort{
 			{
 				Name:          "mcp",
-				ContainerPort: mcpServer.Spec.Port,
+				ContainerPort: mcpServer.Spec.Config.Port,
 				Protocol:      corev1.ProtocolTCP,
 			},
 		},
 	}
 
 	// Add args if specified
-	if len(mcpServer.Spec.Args) > 0 {
-		container.Args = mcpServer.Spec.Args
+	if len(mcpServer.Spec.Config.Arguments) > 0 {
+		container.Args = mcpServer.Spec.Config.Arguments
 	}
 
 	// Add env vars if specified
-	if len(mcpServer.Spec.Env) > 0 {
-		container.Env = mcpServer.Spec.Env
+	if len(mcpServer.Spec.Config.Env) > 0 {
+		container.Env = mcpServer.Spec.Config.Env
 	}
-	if len(mcpServer.Spec.EnvFrom) > 0 {
-		container.EnvFrom = mcpServer.Spec.EnvFrom
+	if len(mcpServer.Spec.Config.EnvFrom) > 0 {
+		container.EnvFrom = mcpServer.Spec.Config.EnvFrom
 	}
 
 	// Apply security context: use user-specified if provided, otherwise apply restricted defaults
-	if mcpServer.Spec.SecurityContext != nil {
-		container.SecurityContext = mcpServer.Spec.SecurityContext
+	if mcpServer.Spec.Runtime.Security.SecurityContext != nil {
+		container.SecurityContext = mcpServer.Spec.Runtime.Security.SecurityContext
 	} else {
 		container.SecurityContext = defaultContainerSecurityContext()
 	}
 
-	// Add volume mount if ConfigMapRef is specified
-	var volumes []corev1.Volume
-	var volumeMounts []corev1.VolumeMount
+	// Process storage mounts from the new Storage API
+	volumes := make([]corev1.Volume, 0, len(mcpServer.Spec.Config.Storage))
+	volumeMounts := make([]corev1.VolumeMount, 0, len(mcpServer.Spec.Config.Storage))
 
-	// Add volume mount if SecretRef is specified
-	if mcpServer.Spec.SecretRef != nil {
+	for i, storage := range mcpServer.Spec.Config.Storage {
+		// Generate a unique volume name for each storage mount
+		volumeName := fmt.Sprintf("vol-%d", i)
 
-		existingSecret := &corev1.Secret{}
-		if err := r.Get(ctx, client.ObjectKey{Name: mcpServer.Spec.SecretRef.Name, Namespace: mcpServer.Namespace}, existingSecret); err != nil {
-			return nil, err
-		}
-
-		volumeName := mcpServer.Spec.SecretVolumeName
-		if volumeName == "" {
-			volumeName = "mcp-secrets"
-		}
-		mountPath := mcpServer.Spec.SecretMountPath
-		if mountPath == "" {
-			mountPath = "/etc/mcp-secrets"
-		}
+		// Create volume mount
 		volumeMount := corev1.VolumeMount{
 			Name:      volumeName,
-			MountPath: mountPath,
-			ReadOnly:  true,
+			MountPath: storage.Path,
 		}
-		if secretKey := mcpServer.Spec.SecretKey; secretKey != "" {
-			if mcpServer.Spec.SecretMountPath == "" {
-				return nil, fmt.Errorf("secretMountPath must be specified when secretKey is set")
-			}
-			if _, ok := existingSecret.Data[secretKey]; !ok {
-				return nil, fmt.Errorf("secret key %s not found in secret %s/%s", secretKey, mcpServer.Namespace, mcpServer.Spec.SecretRef.Name)
-			}
-			volumeMount.SubPath = secretKey
+
+		// Set permissions based on MountPermissions enum
+		// Default to ReadOnly if not specified (empty string means use default)
+		permissions := storage.Permissions
+		if permissions == "" {
+			permissions = mcpv1alpha1.MountPermissionsReadOnly
+		}
+
+		switch permissions {
+		case mcpv1alpha1.MountPermissionsReadOnly:
+			volumeMount.ReadOnly = true
+		case mcpv1alpha1.MountPermissionsReadWrite:
+			volumeMount.ReadOnly = false
+		case mcpv1alpha1.MountPermissionsRecursiveReadOnly:
+			volumeMount.ReadOnly = true
+			volumeMount.RecursiveReadOnly = ptr.To(corev1.RecursiveReadOnlyEnabled)
 		}
 
 		volumeMounts = append(volumeMounts, volumeMount)
-		volumes = append(volumes, corev1.Volume{
-			Name: volumeName,
-			VolumeSource: corev1.VolumeSource{
-				Secret: &corev1.SecretVolumeSource{
-					SecretName: mcpServer.Spec.SecretRef.Name,
-				},
-			},
-		})
-	}
 
-	// Add volume mount if ConfigMapRef is specified
-	if mcpServer.Spec.ConfigMapRef != nil {
-		volumeName := mcpServer.Spec.ConfigMapVolumeName
-		if volumeName == "" {
-			volumeName = "mcp-config"
-		}
-		mountPath := mcpServer.Spec.ConfigMapMountPath
-		if mountPath == "" {
-			mountPath = "/etc/mcp-config"
-		}
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name:      volumeName,
-			MountPath: mountPath,
-			ReadOnly:  true,
-		})
-		volumes = append(volumes, corev1.Volume{
+		// Create volume based on type
+		volume := corev1.Volume{
 			Name: volumeName,
-			VolumeSource: corev1.VolumeSource{
-				ConfigMap: &corev1.ConfigMapVolumeSource{
-					LocalObjectReference: *mcpServer.Spec.ConfigMapRef,
-				},
-			},
-		})
+		}
+
+		switch storage.Source.Type {
+		case mcpv1alpha1.StorageTypeConfigMap:
+			if storage.Source.ConfigMap == nil {
+				return nil, fmt.Errorf("configMap must be set when type is ConfigMap for storage mount at index %d", i)
+			}
+			// Validate ConfigMap name is not empty
+			if storage.Source.ConfigMap.Name == "" {
+				return nil, fmt.Errorf("configMap name must not be empty for storage mount at index %d", i)
+			}
+			// Verify ConfigMap exists only if not optional
+			if storage.Source.ConfigMap.Optional == nil || !*storage.Source.ConfigMap.Optional {
+				configMap := &corev1.ConfigMap{}
+				if err := r.Get(ctx, client.ObjectKey{
+					Name:      storage.Source.ConfigMap.Name,
+					Namespace: mcpServer.Namespace,
+				}, configMap); err != nil {
+					return nil, fmt.Errorf("failed to get ConfigMap %s for storage mount at index %d: %w", storage.Source.ConfigMap.Name, i, err)
+				}
+			}
+			volume.ConfigMap = storage.Source.ConfigMap
+		case mcpv1alpha1.StorageTypeSecret:
+			if storage.Source.Secret == nil {
+				return nil, fmt.Errorf("secret must be set when type is Secret for storage mount at index %d", i)
+			}
+			// Validate Secret name is not empty
+			if storage.Source.Secret.SecretName == "" {
+				return nil, fmt.Errorf("secret name must not be empty for storage mount at index %d", i)
+			}
+			// Verify Secret exists only if not optional
+			if storage.Source.Secret.Optional == nil || !*storage.Source.Secret.Optional {
+				secret := &corev1.Secret{}
+				if err := r.Get(ctx, client.ObjectKey{
+					Name:      storage.Source.Secret.SecretName,
+					Namespace: mcpServer.Namespace,
+				}, secret); err != nil {
+					return nil, fmt.Errorf("failed to get Secret %s for storage mount at index %d: %w", storage.Source.Secret.SecretName, i, err)
+				}
+			}
+			volume.Secret = storage.Source.Secret
+		default:
+			return nil, fmt.Errorf("unsupported storage type %s at index %d", storage.Source.Type, i)
+		}
+
+		volumes = append(volumes, volume)
 	}
 
 	container.VolumeMounts = volumeMounts
@@ -406,18 +433,19 @@ func (r *MCPServerReconciler) createDeployment(ctx context.Context, mcpServer *m
 					Labels: labels,
 				},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: serviceAccountName(mcpServer.Spec.ServiceAccountName),
-					Containers:         []corev1.Container{container},
-					Volumes:            volumes,
+					Containers: []corev1.Container{container},
+					Volumes:    volumes,
 				},
 			},
 		},
 	}
 
-	// Apply pod security context if specified
-	if mcpServer.Spec.PodSecurityContext != nil {
-		deployment.Spec.Template.Spec.SecurityContext = mcpServer.Spec.PodSecurityContext
+	// Add security settings if specified
+	// Only set ServiceAccountName if non-empty; otherwise leave unset for Kubernetes to default
+	if mcpServer.Spec.Runtime.Security.ServiceAccountName != "" {
+		deployment.Spec.Template.Spec.ServiceAccountName = mcpServer.Spec.Runtime.Security.ServiceAccountName
 	}
+	deployment.Spec.Template.Spec.SecurityContext = mcpServer.Spec.Runtime.Security.PodSecurityContext
 
 	return deployment, nil
 }
@@ -474,7 +502,7 @@ func (r *MCPServerReconciler) createService(mcpServer *mcpv1alpha1.MCPServer) *c
 			Ports: []corev1.ServicePort{
 				{
 					Name:       "mcp",
-					Port:       mcpServer.Spec.Port,
+					Port:       mcpServer.Spec.Config.Port,
 					TargetPort: intstr.FromString("mcp"),
 					Protocol:   corev1.ProtocolTCP,
 				},
@@ -496,14 +524,6 @@ func (r *MCPServerReconciler) updateStatusFailed(ctx context.Context, mcpServer 
 		ObservedGeneration: mcpServer.Generation,
 	})
 	_ = r.Status().Update(ctx, mcpServer)
-}
-
-// serviceAccountName returns the given name, defaulting to "default" if empty.
-func serviceAccountName(name string) string {
-	if name == "" {
-		return "default"
-	}
-	return name
 }
 
 // defaultContainerSecurityContext returns the "restricted" Pod Security Standard
