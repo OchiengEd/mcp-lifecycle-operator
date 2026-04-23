@@ -23,6 +23,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -679,12 +680,19 @@ func (r *MCPServerReconciler) reconcileDeployment(
 			!equality.Semantic.DeepEqual(oldPodSpec.Containers[0].ReadinessProbe, newPodSpec.Containers[0].ReadinessProbe) ||
 			oldPodSpec.ServiceAccountName != newPodSpec.ServiceAccountName ||
 			!equality.Semantic.DeepEqual(existingDeployment.Spec.Replicas, deployment.Spec.Replicas) ||
+			!maps.Equal(existingDeployment.Spec.Template.Annotations, deployment.Spec.Template.Annotations) ||
+			!maps.Equal(existingDeployment.Spec.Template.Labels, deployment.Spec.Template.Labels) ||
+			!maps.Equal(existingDeployment.Labels, deployment.Labels) ||
 			ownershipChanged
 	}
 	if needsUpdate {
 		logger.Info("Updating Deployment", "name", existingDeployment.Name)
 		existingDeployment.Spec.Replicas = deployment.Spec.Replicas
 		existingDeployment.Spec.Template.Spec = deployment.Spec.Template.Spec
+		if len(mcpServer.Spec.ExtraLabels) > 0 ||
+			len(mcpServer.Spec.ExtraAnnotations) > 0 {
+			applyCustomDeploymentMetadata(mcpServer, existingDeployment)
+		}
 		if err := r.Update(ctx, existingDeployment); err != nil {
 			logger.Error(err, "Failed to update Deployment")
 			return nil, err
@@ -813,6 +821,11 @@ func (r *MCPServerReconciler) createDeployment(mcpServer *mcpv1alpha1.MCPServer)
 		},
 	}
 
+	// apply extra labels to deployment if supplied
+	if mcpServer.Spec.ExtraLabels != nil || mcpServer.Spec.ExtraAnnotations != nil {
+		applyCustomDeploymentMetadata(mcpServer, deployment)
+	}
+
 	// Add security settings if specified
 	// Only set ServiceAccountName if non-empty; otherwise leave unset for Kubernetes to default
 	if mcpServer.Spec.Runtime.Security.ServiceAccountName != "" {
@@ -933,9 +946,15 @@ func (r *MCPServerReconciler) reconcileService(
 	}
 
 	// Update if ports changed OR if we adopted an orphaned resource
-	needsUpdate := !equality.Semantic.DeepEqual(service.Spec.Ports, existingService.Spec.Ports) || ownershipChanged
+	needsUpdate := !equality.Semantic.DeepEqual(service.Spec.Ports, existingService.Spec.Ports) ||
+		!maps.Equal(service.Annotations, existingService.Annotations) ||
+		!maps.Equal(service.Labels, existingService.Labels) || ownershipChanged
 	if needsUpdate {
 		logger.Info("Updating Service", "name", existingService.Name)
+		if len(mcpServer.Spec.ExtraLabels) > 0 ||
+			len(mcpServer.Spec.ExtraAnnotations) > 0 {
+			applyCustomServiceMetadata(mcpServer, service)
+		}
 		existingService.Spec.Ports = service.Spec.Ports
 		if err := r.Update(ctx, existingService); err != nil {
 			logger.Error(err, "Failed to update Service")
@@ -975,6 +994,10 @@ func (r *MCPServerReconciler) createService(mcpServer *mcpv1alpha1.MCPServer) *c
 				},
 			},
 		},
+	}
+
+	if mcpServer.Spec.ExtraLabels != nil || mcpServer.Spec.ExtraAnnotations != nil {
+		applyCustomServiceMetadata(mcpServer, service)
 	}
 
 	return service
@@ -1048,6 +1071,92 @@ func (r *MCPServerReconciler) applyStatus(
 		client.FieldOwner(fieldManager),
 		client.ForceOwnership,
 	)
+}
+
+var ErrNilMap = errors.New("destination map not initialized")
+
+// mergeMaps is a custom function aimed at merging maps
+// It will merge maps with exception of attempts to override
+// application defined map keys
+func mergeMaps(dst, src map[string]string) error {
+	if dst == nil {
+		return ErrNilMap
+	}
+	// if no custom map is provided,
+	// not further processing is needed
+	if len(src) == 0 {
+		return nil
+	}
+
+	// copy source to destination map
+	// if destination map is empty
+	if len(dst) == 0 && len(src) > 0 {
+		maps.Copy(dst, src)
+		return nil
+	}
+
+	for k, v := range src {
+		// prevent overriding known application labels
+		if k == "app" || k == "mcp-server" {
+			continue
+		}
+
+		dst[k] = v
+	}
+	return nil
+}
+
+func applyCustomDeploymentMetadata(mcpServer *mcpv1alpha1.MCPServer, deployment *appsv1.Deployment) {
+	// apply extra labels to deployment if supplied
+	if mcpServer.Spec.ExtraLabels != nil {
+		if deployment.Labels == nil {
+			deployment.Labels = make(map[string]string)
+		}
+		_ = mergeMaps(
+			deployment.Labels,
+			mcpServer.Spec.ExtraLabels,
+		)
+		if deployment.Spec.Template.Labels == nil {
+			deployment.Spec.Template.Labels = make(map[string]string)
+		}
+		_ = mergeMaps(
+			deployment.Spec.Template.Labels,
+			mcpServer.Spec.ExtraLabels,
+		)
+	}
+
+	if mcpServer.Spec.ExtraAnnotations != nil {
+		if deployment.Annotations == nil {
+			deployment.Annotations = make(map[string]string)
+		}
+		_ = mergeMaps(
+			deployment.Annotations,
+			mcpServer.Spec.ExtraAnnotations,
+		)
+		if deployment.Spec.Template.Annotations == nil {
+			deployment.Spec.Template.Annotations = make(map[string]string)
+		}
+		_ = mergeMaps(
+			deployment.Spec.Template.Annotations,
+			mcpServer.Spec.ExtraAnnotations,
+		)
+	}
+}
+
+func applyCustomServiceMetadata(mcpServer *mcpv1alpha1.MCPServer, service *corev1.Service) {
+	if mcpServer.Spec.ExtraLabels != nil {
+		if service.Labels == nil {
+			service.Labels = make(map[string]string)
+		}
+		_ = mergeMaps(service.Labels, mcpServer.Spec.ExtraLabels)
+	}
+
+	if mcpServer.Spec.ExtraAnnotations != nil {
+		if service.Annotations == nil {
+			service.Annotations = make(map[string]string)
+		}
+		_ = mergeMaps(service.Annotations, mcpServer.Spec.ExtraAnnotations)
+	}
 }
 
 func conditionToAC(condition metav1.Condition) *v1ac.ConditionApplyConfiguration {
